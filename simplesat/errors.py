@@ -36,10 +36,11 @@ class MissingConflicts(NoPackageFound):
 
 
 class SatisfiabilityError(SolverException):
-    def __init__(self, unsat):
+    def __init__(self, unsat, pool=None):
         self.unsat = unsat
+        self.pool = pool
         super(SatisfiabilityError, self).__init__(self.reason)
 
     @property
     def reason(self):
-        return self.unsat.to_string()
+        return self.unsat.to_string(self.pool)

@@ -1,8 +1,9 @@
 import collections
+import itertools
 
 import six
 
-from simplesat.constraints.requirement import InstallRequirement
+from simplesat.constraints import InstallRequirement
 from simplesat.errors import NoPackageFound, SatisfiabilityError
 from simplesat.pool import Pool
 from simplesat.repository import Repository
@@ -12,6 +13,7 @@ from simplesat.sat.policy import InstalledFirstPolicy
 from simplesat.sat import MiniSATSolver
 from simplesat.transaction import Transaction, InstallOperation
 from simplesat.utils import timed_context, connected_nodes
+from simplesat.utils.graph import graph_map, package_lit_dependency_graph
 
 
 def requirements_from_packages(packages):
@@ -56,7 +58,10 @@ def packages_from_requirements(packages, requirements, modifiers=None):
     pool = Pool((Repository(packages),), modifiers=modifiers)
     listed_packages = set()
     for requirement in requirements:
-        listed_packages.update(pool.what_provides(requirement))
+        matches = pool.what_provides(requirement)
+        if not matches:
+            raise NoPackageFound(requirement)
+        listed_packages.update(matches)
     return tuple(sorted(listed_packages, key=lambda p: p._key))
 
 
@@ -180,6 +185,29 @@ def satisfy_requirements(packages, requirements, modifiers=None):
     return packages
 
 
+def simplify_requirements(packages, requirements):
+    needed_packages = packages_from_requirements(packages, requirements)
+    pool = Pool([Repository(packages)])
+    R = InstallRequirement.from_constraints
+    dependencies = set(itertools.chain.from_iterable(
+        pool.what_provides(R(con))
+        for package in needed_packages
+        for con in package.install_requires
+    ))
+    simple_requirements = requirements_from_packages(
+        package
+        for package in needed_packages
+        if package not in dependencies
+    )
+    return simple_requirements
+
+
+def dependency_graph_from_packages(packages):
+    pool = Pool([Repository(packages)])
+    graph = package_lit_dependency_graph(pool, pool.package_ids)
+    return graph_map(pool.id_to_package, graph)
+
+
 class DependencySolver(object):
 
     """
@@ -248,6 +276,9 @@ class DependencySolver(object):
     def solve(self, request):
         """Given a request return a Transaction that would satisfy it.
 
+        If the request has non-empty constraint modifiers, they will replace
+        the modifiers on the pool for the duration of this call.
+
         Parameters
         ----------
         request : Request
@@ -264,29 +295,38 @@ class DependencySolver(object):
             If no resolution is found.
         """
         modifiers = request.modifiers
-        self._pool.modifiers = modifiers if modifiers.targets else None
-        with self._last_rules_time:
-            requirement_ids, rules = self._create_rules_and_initialize_policy(
-                request
+        orig_modifiers = self._pool.modifiers
+        try:
+            if modifiers.targets:
+                self._pool.modifiers = modifiers
+            with self._last_rules_time:
+                requirement_ids, rules = (
+                    self._create_rules_and_initialize_policy(request)
+                )
+            with self._last_solver_init_time:
+                sat_solver = MiniSATSolver.from_rules(rules, self._policy)
+            with self._last_solve_time:
+                try:
+                    solution = sat_solver.search()
+                except SatisfiabilityError as e:
+                    e.pool = self._pool
+                    raise e
+            solution_ids = _solution_to_ids(solution)
+
+            installed_package_ids = set(
+                self._pool.package_id(p)
+                for p in self._installed_repository
             )
-        with self._last_solver_init_time:
-            sat_solver = MiniSATSolver.from_rules(rules, self._policy)
-        with self._last_solve_time:
-            solution = sat_solver.search()
-        solution_ids = _solution_to_ids(solution)
 
-        installed_package_ids = set(
-            self._pool.package_id(p)
-            for p in self._installed_repository
-        )
+            if self.use_pruning:
+                root_ids = installed_package_ids.union(requirement_ids)
+                solution_ids = _connected_packages(
+                    solution_ids, root_ids, self._pool
+                )
 
-        if self.use_pruning:
-            root_ids = installed_package_ids.union(requirement_ids)
-            solution_ids = _connected_packages(
-                solution_ids, root_ids, self._pool
-            )
-
-        return Transaction(self._pool, solution_ids, installed_package_ids)
+            return Transaction(self._pool, solution_ids, installed_package_ids)
+        finally:
+            self._pool.modifiers = orig_modifiers
 
     def _create_rules_and_initialize_policy(self, request):
         pool = self._pool
@@ -335,12 +375,14 @@ def _connected_packages(solution, root_ids, pool):
     # ... -> pkg.install_requires -> pkg names -> ids -> _id_to_package -> ...
 
     def get_name(pkg_id):
-        return pool.id_to_package(abs(pkg_id)).name
+        return pool.id_to_package(abs(pkg_id)).provides
 
     root_names = {get_name(pkg_id) for pkg_id in root_ids}
 
     solution_name_to_id = {
-        get_name(pkg_id): pkg_id for pkg_id in solution
+        name: pkg_id
+        for pkg_id in solution
+        for name in get_name(pkg_id)
         if pkg_id > 0
     }
 

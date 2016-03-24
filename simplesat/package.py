@@ -62,7 +62,8 @@ class PackageMetadata(object):
         parser = PrettyPackageStringParser(EnpkgVersion.from_string)
         return parser.parse_to_package(s)
 
-    def __init__(self, name, version, install_requires=None, conflicts=None):
+    def __init__(self, name, version, install_requires=None, conflicts=None,
+                 provides=None):
         """ Return a new PackageMetdata object.
 
         Parameters
@@ -85,6 +86,14 @@ class PackageMetadata(object):
                 (("MKL", ((">= 10.1", "< 11"),)),
                  ("nose", (("*",),)),
                  ("six", (("> 1.2", "<= 1.2.3"), (">= 1.2.5-2",)))
+        provides : iterable of package names
+            The packages that are provided by this distribution. Useful when
+            this does not match the package name.
+
+            For example, a package ``foo`` is abandoned by its maintainer and a
+            fork ``bar`` is created to continue development. If ``bar`` is
+            intended to be a transparent replacement for ``foo``, then ``bar``
+            `provides` ``foo``.
 
         conflicts : tuple(tuple(str, tuple(tuple(str))))
             A tuple of tuples mapping distribution names to disjunctions of
@@ -94,6 +103,7 @@ class PackageMetadata(object):
             packages that must *not* be installed with this package.
         """
         self._name = name
+        self._provides = (name,) + tuple(provides or ())
         self._version = version
         self._install_requires = install_requires or ()
         self._conflicts = conflicts or ()
@@ -103,6 +113,10 @@ class PackageMetadata(object):
     @property
     def name(self):
         return self._name
+
+    @property
+    def provides(self):
+        return self._provides
 
     @property
     def version(self):
@@ -124,10 +138,16 @@ class PackageMetadata(object):
         return self._hash
 
     def __eq__(self, other):
-        return self._key == other._key
+        try:
+            return self._key == other._key
+        except AttributeError:
+            return NotImplemented
 
     def __ne__(self, other):
-        return self._key != other._key
+        try:
+            return self._key != other._key
+        except AttributeError:
+            return NotImplemented
 
 
 class RepositoryPackageMetadata(object):
@@ -146,6 +166,10 @@ class RepositoryPackageMetadata(object):
     @property
     def name(self):
         return self._package.name
+
+    @property
+    def provides(self):
+        return self._package.provides
 
     @property
     def version(self):
@@ -173,7 +197,13 @@ class RepositoryPackageMetadata(object):
         return self._hash
 
     def __eq__(self, other):
-        return self._key == other._key
+        try:
+            return self._key == other._key
+        except AttributeError:
+            return NotImplemented
 
     def __ne__(self, other):
-        return self._key != other._key
+        try:
+            return self._key != other._key
+        except AttributeError:
+            return NotImplemented

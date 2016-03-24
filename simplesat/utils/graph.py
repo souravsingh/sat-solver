@@ -127,6 +127,29 @@ def package_lit_dependency_graph(pool, package_lits, closed=True):
     return dict(nodes_to_edges)
 
 
+def graph_map(f, graph):
+    """
+    Apply `f` to each member of `graph`.
+
+    Parameters
+    ----------
+    f : callable
+        The callable to apply to each node in `graph`.
+    graph : dict of iterable
+        The graph to map `f` over.
+
+    Returns
+    -------
+    dict of tuple
+        A new graph, having the same topology as `graph`, but with each node
+        `n` replaced by `f(n)`.
+    """
+    return {
+        f(key): tuple(f(n) for n in value)
+        for key, value in graph.items()
+    }
+
+
 def transitive_neighbors(nodes_to_edges):
     """ Return the set of all reachable nodes for each node in the
     nodes_to_edges adjacency dict. """
@@ -220,7 +243,7 @@ def breadth_first_search(start, neighbor_func, targets,
             ...     return [node + 1]
             >>> tuple(breadth_first_search(start, neighbor_func, targets, target_func))
             ((0, 1, 2), (0, 1, 2, 3, 4, 5))
-    """
+    """  # noqa
     queue = deque([start])
     visited = {} if visited is None else visited
     visited[start] = None

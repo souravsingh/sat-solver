@@ -22,7 +22,7 @@ class RuleType(enum.Enum):
     package_requires = 7
     package_conflicts = 8
     package_same_name = 10
-    package_implicit_obsoletes = 11
+    package_provides = 11
     package_installed = 12
     package_broken = 100
 
@@ -132,6 +132,11 @@ class PackageRule(object):
             package_str = pool.id_to_string(abs(package_id))
             msg = "{} was ignored because it depends on missing packages"
             rule_desc = msg.format(package_str)
+        elif self._reason == RuleType.package_provides:
+            new = self._pretty_literals(pool, self.literals[0:1], sign=False)
+            old = self._pretty_literals(pool, self.literals[1:], sign=False)
+            msg = "{} provides (and thus conflicts with) {}"
+            rule_desc = msg.format(new, old)
         else:
             rule_desc = s
 
@@ -364,7 +369,7 @@ class RulesGenerator(object):
         Create rules for each of the known conflicts with `package`.
         """
 
-        # Conflicts due to implicit obsoletion or same-name
+        # Conflicts due to other providers or same-name
         pkg_requirement = ConflictRequirement._from_string(package.name)
         obsolete_providers = self._pool.what_provides(pkg_requirement)
         # We add our new requirement to the stack of requirements we've
@@ -378,7 +383,7 @@ class RulesGenerator(object):
                 if provider.name == package.name:
                     reason = RuleType.package_same_name
                 else:
-                    reason = RuleType.package_implicit_obsoletes
+                    reason = RuleType.package_provides
                 rule = self._create_conflicts_rule(
                     package, provider, reason, combined_requirements)
                 self._add_rule(rule, "package")
